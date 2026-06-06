@@ -307,6 +307,7 @@
         <div class="pan" id="ctxD"></div>
       </div>
       <div class="inter" id="inter"></div>
+      <div id="numCalc" style="padding:12px 26px;background:var(--surface,#0f0c08);border-bottom:1px solid var(--border,#2a2219);display:flex;align-items:center;gap:18px;flex-wrap:wrap;font-size:13px"></div>
     </div>
 
     <div class="form">
@@ -473,6 +474,7 @@ function select(id){
 // ════════ DESCRIPCIÓN EDITABLE ════════
 // Campos descriptivos de signos, en orden de lectura, con etiqueta legible.
 const DESC_FIELDS = [
+  ['numero','Número'],
   ['dominio','Dominio'],
   ['fuerza_ruptura','Fuerza de Ruptura'],
   ['fuerza_restauracion','Fuerza de Restauración'],
@@ -499,7 +501,13 @@ function renderDesc(){
   el('descPanel').style.display='block';
   el('descStatus').textContent='';
   const rows = DESC_FIELDS.map(([key,label])=>{
-    const val = escAttr(active[key]);
+    if(key==='numero'){
+      return `<div style="margin-bottom:14px">
+        <label style="display:block;font-family:'Cinzel',serif;font-size:10.5px;letter-spacing:1.5px;color:var(--ink-dim,#a99c80);text-transform:uppercase;margin-bottom:5px">${label} <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint,#73694f);font-family:'EB Garamond',serif">entero · usado para el cálculo en las parejas</span></label>
+        <input type="number" step="1" data-k="numero" placeholder="—"
+          style="width:140px;box-sizing:border-box;background:#0a0806;border:1px solid var(--border,#2a2219);border-radius:7px;color:var(--ink,#ece3cc);padding:9px 11px;font-family:'EB Garamond',serif;font-size:16px">
+      </div>`;
+    }
     const big = ['fuerza_ruptura','fuerza_restauracion','decreto','verso_restaurador','perfil','verso'].includes(key);
     const rowsAttr = big ? 6 : 2;
     return `<div style="margin-bottom:14px">
@@ -510,8 +518,8 @@ function renderDesc(){
   el('descFields').innerHTML = rows;
   // set values via .value (avoids HTML-escaping issues with quotes/newlines)
   DESC_FIELDS.forEach(([key])=>{
-    const ta = el('descFields').querySelector(`textarea[data-k="${key}"]`);
-    if(ta) ta.value = active[key]==null ? '' : active[key];
+    const f = el('descFields').querySelector(`[data-k="${key}"]`);
+    if(f) f.value = active[key]==null ? '' : active[key];
   });
   // collapse by default on each new selection
   el('descBody').style.display='none';
@@ -527,8 +535,16 @@ async function saveDesc(){
   const status = el('descStatus');
   const payload = {};
   DESC_FIELDS.forEach(([key])=>{
-    const ta = el('descFields').querySelector(`textarea[data-k="${key}"]`);
-    if(ta){ const v = ta.value.trim(); payload[key] = v===''? null : v; }
+    const f = el('descFields').querySelector(`[data-k="${key}"]`);
+    if(!f) return;
+    if(key==='numero'){
+      const raw = f.value.trim();
+      payload.numero = raw==='' ? null : parseInt(raw,10);
+      if(payload.numero!==null && isNaN(payload.numero)) payload.numero = null;
+    } else {
+      const v = f.value.trim();
+      payload[key] = v===''? null : v;
+    }
   });
   status.style.color='var(--ink-dim,#a99c80)'; status.textContent='Guardando…';
   try{
@@ -563,6 +579,36 @@ function renderGrid(){
 }
 
 // ════════ EDITOR ════════
+// Digital root of a non-negative integer (repeated digit sum). dr(0)=0.
+function digitalRoot(n){
+  n = Math.abs(Math.trunc(n));
+  return n === 0 ? 0 : 1 + (n - 1) % 9;
+}
+// Render the live número calculation for a pair from the two spirits' numbers.
+function renderNumCalc(P, D){
+  const box = el('numCalc');
+  const pn = (P.numero===null || P.numero===undefined || P.numero==='') ? null : P.numero;
+  const dn = (D.numero===null || D.numero===undefined || D.numero==='') ? null : D.numero;
+  const chip = (label, val) =>
+    `<span style="color:var(--ink-faint,#73694f);font-family:'Cinzel',serif;font-size:10px;letter-spacing:1.5px;text-transform:uppercase">${label}</span>` +
+    `<b style="color:var(--gold-bright,#e8c874);font-size:16px;margin-left:6px">${val}</b>`;
+  if(pn===null || dn===null){
+    const missing = [pn===null?P.nombre:null, dn===null?D.nombre:null].filter(Boolean).join(' y ');
+    box.innerHTML = `<span style="color:var(--ink-dim,#a99c80);font-style:italic">Número pendiente: falta asignar el número de ${missing}. El producto y la raíz digital aparecerán al completarlo.</span>`;
+    return;
+  }
+  const prod = pn * dn;
+  const root = digitalRoot(prod);
+  box.innerHTML =
+    chip(P.nombre, pn) +
+    `<span style="color:var(--ink-faint,#73694f)">×</span>` +
+    chip(D.nombre, dn) +
+    `<span style="color:var(--ink-faint,#73694f)">=</span>` +
+    chip('Producto', prod) +
+    `<span style="color:var(--ink-faint,#73694f)">→</span>` +
+    chip('Raíz digital', root);
+}
+
 async function openEditor(pid,did){
   const P=signos.find(s=>s.id===pid), D=signos.find(s=>s.id===did);
   const I=inter[`${P.elemento}-${D.elemento}`];
@@ -578,6 +624,9 @@ async function openEditor(pid,did){
   el('inter').innerHTML = I
     ? `<span class="tag">${P.elemento} × ${D.elemento}</span><b>${I.titulo||''}</b><span class="dsc">${I.descripcion||''}</span>`
     : `<span class="tag">${P.elemento} × ${D.elemento}</span><span class="dsc">Sin interacción elemental definida.</span>`;
+
+  // Live numero computation from the two spirits' numbers (nothing stored here).
+  renderNumCalc(P, D);
 
   // load existing
   let ex=combos[`${pid}-${did}`]&&combos[`${pid}-${did}`].texto!==undefined?combos[`${pid}-${did}`]:null;
